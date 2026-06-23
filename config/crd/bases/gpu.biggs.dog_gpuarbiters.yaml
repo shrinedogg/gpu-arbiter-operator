@@ -1,0 +1,247 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: gpuarbiters.gpu.biggs.dog
+spec:
+  group: gpu.biggs.dog
+  names:
+    kind: GPUArbiter
+    listKind: GPUArbiterList
+    plural: gpuarbiters
+    shortNames:
+    - gpa
+    - gpuarbiter
+    singular: gpuarbiter
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          GPUArbiter arbitrates access to a shared GPU between a vLLM inference
+          Deployment and transient gaming-session pods.
+
+          It (1) scales vLLM to 0 while a game is running and back to 1 when idle, and
+          (2) removes an injected scheduling gate once VRAM is confirmed free, with a
+          bounded timeout fallback.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: GPUArbiterSpec defines the desired state of GPUArbiter.
+            properties:
+              freeMiB:
+                default: 8000
+                description: |-
+                  FreeMiB is the DCGM_FI_DEV_FB_FREE threshold (in MiB) at which the GPU
+                  is considered to have enough free VRAM to ungate. With vLLM up, free is
+                  ~518 MiB; after scale-to-0 it jumps to ~32000 MiB.
+                format: int64
+                type: integer
+              game:
+                description: Game describes the gaming-session pods whose presence
+                  triggers scale-down.
+                properties:
+                  labelSelector:
+                    description: LabelSelector selects gaming-session pods. Equivalent
+                      to -l on kubectl.
+                    properties:
+                      matchExpressions:
+                        description: matchExpressions is a list of label selector
+                          requirements. The requirements are ANDed.
+                        items:
+                          description: |-
+                            A label selector requirement is a selector that contains values, a key, and an operator that
+                            relates the key and values.
+                          properties:
+                            key:
+                              description: key is the label key that the selector
+                                applies to.
+                              type: string
+                            operator:
+                              description: |-
+                                operator represents a key's relationship to a set of values.
+                                Valid operators are In, NotIn, Exists and DoesNotExist.
+                              type: string
+                            values:
+                              description: |-
+                                values is an array of string values. If the operator is In or NotIn,
+                                the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                the values array must be empty. This array is replaced during a strategic
+                                merge patch.
+                              items:
+                                type: string
+                              type: array
+                              x-kubernetes-list-type: atomic
+                          required:
+                          - key
+                          - operator
+                          type: object
+                        type: array
+                        x-kubernetes-list-type: atomic
+                      matchLabels:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                          map is equivalent to an element of matchExpressions, whose key field is "key", the
+                          operator is "In", and the values array contains only "value". The requirements are ANDed.
+                        type: object
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  namespace:
+                    description: Namespace where gaming-session pods live.
+                    type: string
+                required:
+                - labelSelector
+                - namespace
+                type: object
+              gateName:
+                default: gpu.biggs.dog/await-vram
+                description: |-
+                  GateName is the scheduling gate that the MutatingAdmissionPolicy injects
+                  at pod CREATE. The arbiter removes it once VRAM is confirmed free.
+                type: string
+              intervalSeconds:
+                default: 2
+                description: |-
+                  IntervalSeconds is how often the controller re-checks non-terminal state
+                  (e.g. the VRAM metric while waiting to ungate). Terminal k8s events
+                  (pod/vllm changes) trigger an immediate reconcile, so this only governs
+                  the periodic metric re-poll.
+                type: integer
+              metrics:
+                description: |-
+                  Metrics is the VictoriaMetrics (Prometheus-compatible) endpoint polled
+                  for the DCGM free-VRAM gauge as a secondary ungate signal.
+                properties:
+                  query:
+                    default: max(DCGM_FI_DEV_FB_FREE)
+                    description: Query is the instant PromQL query evaluated for the
+                      free-VRAM gauge.
+                    type: string
+                  timeoutSeconds:
+                    default: 4
+                    description: TimeoutSeconds for the HTTP query. Defaults to 4.
+                    type: integer
+                  url:
+                    default: http://vmsingle-stack.observability.svc:8428
+                    description: |-
+                      URL is the base VictoriaMetrics / Prometheus URL, e.g.
+                      http://vmsingle-stack.observability.svc:8428
+                    type: string
+                type: object
+              timeoutSeconds:
+                default: 45
+                description: |-
+                  TimeoutSeconds is a safety fallback: a gated pod is ungate anyway after
+                  this many seconds, so a stuck metric degrades to the old software-encode
+                  path instead of 401-ing the game session. Kept under direwolf's 60s
+                  session reaper.
+                type: integer
+              vllm:
+                description: |-
+                  VLLM is the inference Deployment to scale down while a game is running
+                  (and back up when idle), so the GPU VRAM it holds is released.
+                properties:
+                  name:
+                    description: Name of the vLLM Deployment.
+                    type: string
+                  namespace:
+                    description: Namespace where the vLLM Deployment lives.
+                    type: string
+                required:
+                - name
+                - namespace
+                type: object
+            required:
+            - game
+            - vllm
+            type: object
+          status:
+            description: GPUArbiterStatus defines the observed state of GPUArbiter.
+            properties:
+              currentVLLMReplicas:
+                description: CurrentVLLMReplicas is the vLLM Deployment's last observed
+                  spec.replicas.
+                format: int32
+                type: integer
+              desiredVLLMReplicas:
+                description: DesiredVLLMReplicas is what the arbiter most recently
+                  wanted vLLM at.
+                format: int32
+                type: integer
+              freeVRAMMiB:
+                description: FreeVRAMMiB is the last DCGM free-VRAM sample (MiB),
+                  or -1 if unknown.
+                format: int64
+                type: integer
+              gamePods:
+                description: GamePods is the number of currently-running gaming-session
+                  pods.
+                type: integer
+              gatedPods:
+                description: GatedPods is the set of pods currently held by the await-vram
+                  gate.
+                items:
+                  description: GatedPodStatus is the arbiter's view of one gated pod.
+                  properties:
+                    firstSeen:
+                      description: FirstSeen is the time the gate was first observed
+                        on this pod.
+                      format: date-time
+                      type: string
+                    name:
+                      description: Name of the pod.
+                      type: string
+                    reason:
+                      description: Reason is the most recent ungate evaluation ("wait",
+                        "vllm-down", etc).
+                      type: string
+                  required:
+                  - firstSeen
+                  - name
+                  - reason
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              lastReconcile:
+                description: LastReconcile is the time of the last reconcile pass.
+                format: date-time
+                type: string
+              message:
+                description: |-
+                  Message is a human-readable summary of the last decision (mirrors the
+                  old bash log lines, e.g. "scale vllm 1->0 (gaming=1)").
+                type: string
+              observedGeneration:
+                description: Observed generation of the spec the controller has acted
+                  on.
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

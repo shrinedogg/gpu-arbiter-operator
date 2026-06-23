@@ -1,0 +1,18 @@
+# Adds CRD, RBAC, the manager Deployment, the gate-injecting
+# MutatingAdmissionPolicy, and a sample GPUArbiter instance.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+labels:
+  - includeSelectors: true
+    pairs:
+      app.kubernetes.io/name: gpu-arbiter-operator
+resources:
+  - ../crd
+  - ../rbac
+  - ../manager
+  - schedulinggate_policy.yaml
+  # The GPUArbiter instance that configures the controller (encodes the old
+  # env-var knobs: vllm=ai-system/vllm, game=dreamcast/app=direwolf-worker,
+  # gate=gpu.biggs.dog/await-vram, freeMiB=8000, timeout=45s, interval=2s).
+  - ../samples/gpu_v1alpha1_gpuarbiter.yaml
+# +kubebuilder:scaffold:crdkustomizewatchers

@@ -1,0 +1,30 @@
+apiVersion: gpu.biggs.dog/v1alpha1
+kind: GPUArbiter
+metadata:
+  name: cluster0
+  labels:
+    app.kubernetes.io/name: gpu-arbiter-operator
+spec:
+  # vLLM inference Deployment to scale down while a game is running.
+  vllm:
+    namespace: ai-system
+    name: vllm
+  # Gaming-session pods whose presence triggers scale-down.
+  game:
+    namespace: dreamcast
+    labelSelector:
+      matchLabels:
+        app: direwolf-worker
+  # Scheduling gate removed once VRAM is free. Must match the
+  # MutatingAdmissionPolicy in config/default/schedulinggate-policy.yaml.
+  gateName: gpu.biggs.dog/await-vram
+  metrics:
+    url: http://vmsingle-stack.observability.svc:8428
+    query: max(DCGM_FI_DEV_FB_FREE)
+    timeoutSeconds: 4
+  # Ungate once free VRAM is >= this many MiB.
+  freeMiB: 8000
+  # Safety fallback: ungate anyway after this many seconds.
+  timeoutSeconds: 45
+  # Re-poll interval (s) while waiting to ungate.
+  intervalSeconds: 2

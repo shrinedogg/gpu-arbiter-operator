@@ -1,0 +1,17 @@
+# Binaries
+bin/
+manager
+
+# Test artifacts
+*.test
+cover.out
+coverage.out
+
+# Generated tooling installed by the Makefile
+/bin
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/

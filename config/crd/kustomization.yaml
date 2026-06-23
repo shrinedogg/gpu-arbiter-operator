@@ -1,0 +1,3 @@
+resources:
+  - bases/gpu.biggs.dog_gpuarbiters.yaml
+# +kubebuilder:scaffold:crdkustomizeresource
