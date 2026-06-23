@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gpu-arbiter-system
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gpu-arbiter-controller-manager
+  namespace: gpu-arbiter-system
+  labels:
+    control-plane: controller-manager
+    app.kubernetes.io/name: gpu-arbiter-operator
+spec:
+  replicas: 1
+  # Recreate (like the original) since leader election handles HA; a single
+  # active replica is all that's needed.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      control-plane: controller-manager
+  template:
+    metadata:
+      labels:
+        control-plane: controller-manager
+        app.kubernetes.io/name: gpu-arbiter-operator
+    spec:
+      serviceAccountName: gpu-arbiter-controller-manager
+      enableServiceLinks: false
+      containers:
+        - name: manager
+          image: gpu-arbiter-operator:latest
+          imagePullPolicy: IfNotPresent
+          # Minimal: a few targeted GETs/LISTs every IntervalSeconds, plus a
+          # periodic VictoriaMetrics query. Matches the original bash pod's
+          # footprint (25m / 64Mi requests).
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          # controller-runtime health/metrics.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            runAsUser: 65532
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 10

@@ -1,6 +1,8 @@
 # Binaries
 bin/
-manager
+# A stray top-level manager binary (e.g. from `go build -o manager`).
+# Root-anchored so it does NOT match the cmd/manager/ source directory.
+/manager
 
 # Test artifacts
 *.test

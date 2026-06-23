@@ -1,4 +1,4 @@
-module github.com/biggs-dog/gpu-arbiter-operator
+module github.com/shrinedogg/gpu-arbiter-operator
 
 go 1.26.0
 

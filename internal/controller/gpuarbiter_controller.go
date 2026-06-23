@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	gpuv1alpha1 "github.com/biggs-dog/gpu-arbiter-operator/api/v1alpha1"
+	gpuv1alpha1 "github.com/shrinedogg/gpu-arbiter-operator/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
