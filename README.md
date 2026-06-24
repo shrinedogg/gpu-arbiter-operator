@@ -42,17 +42,23 @@ redeploy:
 | `GAME_SELECTOR`| `spec.game.labelSelector`    | —                                                  |
 | `GATE`         | `spec.gateName`              | `gpu.biggs.dog/await-vram`                         |
 | `VM_URL`       | `spec.metrics.url`           | `http://vmsingle-stack.observability.svc:8428`     |
+| `VM_QUERY`     | `spec.metrics.query`         | `max(DCGM_FI_DEV_FB_FREE)`                          |
+| `VM_TIMEOUT`   | `spec.metrics.timeoutSeconds`| `4`                                                |
 | `FREE_MIB`     | `spec.freeMiB`               | `8000`                                             |
 | `GATE_TIMEOUT` | `spec.timeoutSeconds`        | `45`                                               |
 | `INTERVAL`     | `spec.intervalSeconds`       | `2`                                                |
 
-A ready-to-apply instance encoding the original values is in
+The full spec is `vllm{namespace,name}`, `game{namespace,labelSelector}`,
+`gateName`, `metrics{url,query,timeoutSeconds}`, `freeMiB`, `timeoutSeconds`,
+and `intervalSeconds`. A ready-to-apply instance encoding the original values
+is in
 [`config/samples/gpu_v1alpha1_gpuarbiter.yaml`](config/samples/gpu_v1alpha1_gpuarbiter.yaml).
 
-The CR also reports **status** (`gamePods`, `currentVLLMReplicas`,
-`desiredVLLMReplicas`, `freeVRAMMiB`, `gatedPods[]`, `message`) that replaces
-the old bash log lines — `kubectl describe gpuarbiter cluster0` now shows the
-controller's last decision.
+The CR also reports **status** (`observedGeneration`, `gamePods`,
+`currentVLLMReplicas`, `desiredVLLMReplicas`, `freeVRAMMiB`, `gatedPods[]`,
+`lastReconcile`, `message`) that replaces the old bash log lines —
+`kubectl describe gpuarbiter cluster0` now shows the controller's last
+decision.
 
 ## Design notes
 
@@ -74,6 +80,22 @@ controller's last decision.
   This is broader than the original's per-namespace Roles + cross-namespace
   RoleBindings; see `config/rbac` if you want to tighten it back to namespaced
   permissions for `pods`/`deployments`.
+
+## Notes / changelog
+
+### v0.1.0
+
+- **Scaling uses the Deployment scale subresource** (`deployments/scale`) via
+  `SubResource("scale").Update(...)`. The earlier implementation built a
+  `client.MergeFrom` patch backwards, which emitted
+  `{"spec":{"replicas":null}}` — deleting the field and letting it default
+  back to `1` instead of scaling to the target. The scale subresource sets
+  `spec.replicas` to the intended value and matches the operator's RBAC.
+- **Status is written with a full `Status().Update()`** instead of a JSON
+  merge patch. RFC 7386 merge patches drop `omitempty` zero values, so when
+  `gamePods` fell from `1` to `0` the field was omitted and the stale `1`
+  persisted. A full Update writes every field authoritatively, so zero-valued
+  fields clear correctly.
 
 ## Build & develop
 
@@ -98,8 +120,27 @@ make docker-build docker-push IMG=shrinedogg/gpu-arbiter-operator:v0.1.0
 make deploy IMG=shrinedogg/gpu-arbiter-operator:v0.1.0
 ```
 
-The manager runs in the `gpu-arbiter-system` namespace under a restricted
-PodSecurity profile (non-root, distroless, dropped capabilities).
+The manager runs under a restricted PodSecurity profile (non-root, distroless,
+dropped capabilities).
+
+The published image is **`docker.io/shrinedogg/gpu-arbiter-operator:v0.1.0`**
+(`linux/amd64`, matching the cluster nodes), built and pushed with:
+
+```bash
+docker buildx build --platform linux/amd64 \
+  -t shrinedogg/gpu-arbiter-operator:v0.1.0 --push .
+```
+
+### Flux GitOps (biggs.dog)
+
+In the homelab this operator is deployed declaratively via Flux from the
+`biggs.dog` repo, not with `make deploy`:
+
+- `clusters/cluster0/kubernetes/apps/dreamcast/gpu-arbiter-operator` — the
+  operator (CRD, RBAC, manager Deployment), running in the `dreamcast`
+  namespace with cross-namespace RBAC to scale `ai-system/vllm`.
+- `clusters/cluster0/kubernetes/apps/dreamcast/gpu-arbiter-instance` — the
+  `GPUArbiter` custom resource encoding the live configuration.
 
 ### Verifying
 

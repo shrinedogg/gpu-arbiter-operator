@@ -9,6 +9,7 @@ import (
 
 	gpuv1alpha1 "github.com/shrinedogg/gpu-arbiter-operator/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -87,8 +88,14 @@ func (r *GPUArbiterReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		status.LastReconcile = metav1.Now()
 		updated := arb.DeepCopy()
 		updated.Status = status
-		if err := r.Status().Patch(ctx, updated, client.Merge); err != nil {
-			logger.Error(err, "failed to patch GPUArbiter status")
+		// Full status Update (not a JSON merge patch): a merge patch with
+		// omitempty fields silently drops zero values (e.g. GamePods going
+		// 1->0), leaving stale status. Update writes every field
+		// authoritatively. arb.DeepCopy() carries the right resourceVersion;
+		// the single-leader/single-worker controller makes conflicts a
+		// non-issue, and any conflict simply retries on the next requeue.
+		if err := r.Status().Update(ctx, updated); err != nil {
+			logger.Error(err, "failed to update GPUArbiter status")
 		}
 	}()
 
@@ -241,18 +248,19 @@ func (r *GPUArbiterReconciler) getVLLM(ctx context.Context, spec gpuv1alpha1.GPU
 	return &dep, nil
 }
 
-// scaleVLLM updates the vLLM Deployment's replica count.
+// scaleVLLM updates the vLLM Deployment's replica count via the scale
+// subresource (deployments/scale), which is exactly what the operator's RBAC
+// grants. Writing the Scale object sets spec.replicas to the target value
+// rather than emitting a merge patch.
 func (r *GPUArbiterReconciler) scaleVLLM(ctx context.Context, spec gpuv1alpha1.GPUArbiterSpec, replicas int32) error {
-	patch := client.MergeFrom(&appsv1.Deployment{
+	scale := &autoscalingv1.Scale{
 		ObjectMeta: metav1.ObjectMeta{Namespace: spec.VLLM.Namespace, Name: spec.VLLM.Name},
-		Spec:       appsv1.DeploymentSpec{Replicas: ptr.To(replicas)},
-	})
-	// Strategic merge on just spec.replicas: merge the patch over the live
-	// object.
-	live := &appsv1.Deployment{
+		Spec:       autoscalingv1.ScaleSpec{Replicas: replicas},
+	}
+	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Namespace: spec.VLLM.Namespace, Name: spec.VLLM.Name},
 	}
-	if err := r.Patch(ctx, live, patch); err != nil {
+	if err := r.SubResource("scale").Update(ctx, dep, client.WithSubResourceBody(scale)); err != nil {
 		return fmt.Errorf("scale vllm: %w", err)
 	}
 	return nil
