@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -165,6 +166,56 @@ func TestPodHasGate(t *testing.T) {
 	}
 	if podHasGate(pod, "missing") {
 		t.Fatal("podHasGate found a gate that isn't present")
+	}
+}
+
+func TestRemoveSchedulingGate(t *testing.T) {
+	tests := []struct {
+		name        string
+		gates       []corev1.PodSchedulingGate
+		gateName    string
+		want        []corev1.PodSchedulingGate
+		wantRemoved bool
+	}{
+		{
+			name: "preserves unrelated gates",
+			gates: []corev1.PodSchedulingGate{
+				{Name: "capacity.example.com/available"},
+				{Name: "gpu.biggs.dog/await-vram"},
+				{Name: "maintenance.example.com/complete"},
+			},
+			gateName: "gpu.biggs.dog/await-vram",
+			want: []corev1.PodSchedulingGate{
+				{Name: "capacity.example.com/available"},
+				{Name: "maintenance.example.com/complete"},
+			},
+			wantRemoved: true,
+		},
+		{
+			name:        "removes the sole gate",
+			gates:       []corev1.PodSchedulingGate{{Name: "gpu.biggs.dog/await-vram"}},
+			gateName:    "gpu.biggs.dog/await-vram",
+			want:        nil,
+			wantRemoved: true,
+		},
+		{
+			name:     "leaves the pod unchanged when the gate is absent",
+			gates:    []corev1.PodSchedulingGate{{Name: "capacity.example.com/available"}},
+			gateName: "gpu.biggs.dog/await-vram",
+			want:     []corev1.PodSchedulingGate{{Name: "capacity.example.com/available"}},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pod := &corev1.Pod{Spec: corev1.PodSpec{SchedulingGates: tc.gates}}
+			if got := removeSchedulingGate(pod, tc.gateName); got != tc.wantRemoved {
+				t.Fatalf("removeSchedulingGate() = %v, want %v", got, tc.wantRemoved)
+			}
+			if !reflect.DeepEqual(pod.Spec.SchedulingGates, tc.want) {
+				t.Fatalf("scheduling gates = %#v, want %#v", pod.Spec.SchedulingGates, tc.want)
+			}
+		})
 	}
 }
 
