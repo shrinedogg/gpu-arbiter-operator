@@ -6,7 +6,6 @@
 # so the gate cannot be set on the App CR; this native MutatingAdmissionPolicy
 # adds it at pod CREATE.
 #
-# Carried over from the original bash gpu-arbiter unchanged.
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingAdmissionPolicy
 metadata:
@@ -28,16 +27,18 @@ spec:
         !object.spec.schedulingGates.exists(g, g.name == "gpu.biggs.dog/await-vram")
   reinvocationPolicy: Never
   mutations:
-    - patchType: JSONPatch
-      jsonPatch:
+    - patchType: ApplyConfiguration
+      applyConfiguration:
         expression: >-
-          [
-            JSONPatch{
-              op: "add",
-              path: "/spec/schedulingGates",
-              value: [{"name": "gpu.biggs.dog/await-vram"}]
+          Object{
+            spec: Object.spec{
+              schedulingGates: [
+                Object.spec.schedulingGates{
+                  name: "gpu.biggs.dog/await-vram"
+                }
+              ]
             }
-          ]
+          }
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingAdmissionPolicyBinding

@@ -187,7 +187,7 @@ func (r *GPUArbiterReconciler) reconcileGates(
 
 		switch reason.kind {
 		case reasonUngate:
-			if err := r.removeGate(ctx, pod); err != nil {
+			if err := r.removeGate(ctx, pod, spec.GateName); err != nil {
 				logger.Error(err, "failed to ungate pod", "pod", client.ObjectKeyFromObject(pod))
 				// Keep it in the gated set; will retry next reconcile.
 				stillGated = append(stillGated, podStatus(pod, reason.String()))
@@ -266,15 +266,34 @@ func (r *GPUArbiterReconciler) scaleVLLM(ctx context.Context, spec gpuv1alpha1.G
 	return nil
 }
 
-// removeGate clears the pod's schedulingGates, which removes the gate. Only the
-// kubelet/scheduler may add gates; an arbiter may only remove them.
-func (r *GPUArbiterReconciler) removeGate(ctx context.Context, pod *corev1.Pod) error {
+// removeGate removes only the gate owned by this controller. Other controllers
+// may use independent scheduling gates on the same pod.
+func (r *GPUArbiterReconciler) removeGate(ctx context.Context, pod *corev1.Pod, gateName string) error {
 	base := pod.DeepCopy()
-	pod.Spec.SchedulingGates = nil
+	if !removeSchedulingGate(pod, gateName) {
+		return nil
+	}
 	if err := r.Patch(ctx, pod, client.MergeFrom(base)); err != nil {
-		return fmt.Errorf("remove scheduling gate from %s/%s: %w", pod.Namespace, pod.Name, err)
+		return fmt.Errorf("remove scheduling gate %q from %s/%s: %w", gateName, pod.Namespace, pod.Name, err)
 	}
 	return nil
+}
+
+func removeSchedulingGate(pod *corev1.Pod, gateName string) bool {
+	remaining := make([]corev1.PodSchedulingGate, 0, len(pod.Spec.SchedulingGates))
+	for _, gate := range pod.Spec.SchedulingGates {
+		if gate.Name != gateName {
+			remaining = append(remaining, gate)
+		}
+	}
+	if len(remaining) == len(pod.Spec.SchedulingGates) {
+		return false
+	}
+	if len(remaining) == 0 {
+		remaining = nil
+	}
+	pod.Spec.SchedulingGates = remaining
+	return true
 }
 
 // metricsFree returns the DCGM free-VRAM gauge in MiB, or -1 if unknown.
